@@ -612,7 +612,7 @@ function applyLock() {
   $('#lockTxt').textContent = S.locked ? 'Unlock editing' : 'View-only mode';
   $('#palette').style.display = S.locked ? 'none' : '';
   $('#zsTxt').textContent = 'Icons scale with zoom: ' + (S.zoomScale ? 'ON' : 'OFF');
-  S.views.forEach((_, id) => { const it = S.items.get(id); if (it) { removeView(id); render(it); } });
+  [...S.views.keys()].forEach((id) => { const it = S.items.get(id); removeView(id); if (it) render(it); });
   renderInspector();
 }
 
