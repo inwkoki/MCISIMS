@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1b1f24">
+<title>MCI SIM · KKU</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">🚑 <b>MCI SIM</b><span class="sub">KKU</span></div>
+  <button id="roomBtn" class="chip" title="Room / share">Room: <b id="roomCode">—</b></button>
+  <button id="peersBtn" class="chip" title="People online"><span id="connDot" class="dot off"></span><span id="peerCount">0</span> online</button>
+  <div id="timer" class="chip timer" title="Shared scenario timer">
+    <span id="timerTxt">00:00</span>
+    <button id="timerToggle" title="Start / pause">▶</button>
+    <button id="timerReset" title="Reset">↺</button>
+  </div>
+  <div class="spacer"></div>
+  <button id="placesBtn" class="tbtn" title="Places">📍<span class="lbl"> Places</span></button>
+  <button id="layerBtn" class="tbtn" title="Map style">🗺️<span class="lbl"> Map</span></button>
+  <button id="logBtn" class="tbtn" title="Activity log">📝<span class="lbl"> Log</span></button>
+  <button id="menuBtn" class="tbtn" title="Menu">☰</button>
+</header>
+
+<div id="map"></div>
+
+<aside id="palette">
+  <div class="pal-head">
+    <div id="palTabs"></div>
+    <button id="palToggle" title="Collapse">▾</button>
+  </div>
+  <div id="palItems"></div>
+  <label class="repeat"><input type="checkbox" id="repeatPlace"> Place multiple</label>
+</aside>
+
+<div id="stats"></div>
+
+<div id="modeBar" hidden>
+  <span id="modeTxt"></span>
+  <button id="modeUndo" hidden>Undo</button>
+  <button id="modeDone" hidden>Finish</button>
+  <button id="modeCancel">Cancel</button>
+</div>
+
+<section id="inspector" hidden></section>
+
+<section id="logPanel" hidden>
+  <div class="panel-head"><b>Activity log</b><button data-close="logPanel">✕</button></div>
+  <ol id="logList"></ol>
+</section>
+
+<div id="menu" class="dropdown" hidden>
+  <button data-act="share">🔗 Share room (link + QR)</button>
+  <button data-act="newroom">➕ New room</button>
+  <button data-act="joinroom">🚪 Join room…</button>
+  <button data-act="rename">👤 Change my name</button>
+  <button data-act="lock">🔒 <span id="lockTxt">View-only mode</span></button>
+  <button data-act="zoomscale">🔍 <span id="zsTxt">Icons scale with zoom: ON</span></button>
+  <button data-act="follow">📡 Bring everyone to my view</button>
+  <button data-act="export">💾 Export scenario (JSON)</button>
+  <button data-act="import">📂 Import scenario…</button>
+  <button data-act="restore">♻️ Restore local backup</button>
+  <button data-act="exportlog">🧾 Export log (CSV)</button>
+  <button data-act="server">🛰️ Sync server…</button>
+  <button data-act="clear" class="danger">🗑️ Clear map for everyone</button>
+</div>
+<div id="placesMenu" class="dropdown" hidden></div>
+<div id="layerMenu" class="dropdown" hidden></div>
+
+<div id="modal" hidden><div class="modal-box" id="modalBox"></div></div>
+<div id="toast" hidden></div>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/mqtt.min.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
