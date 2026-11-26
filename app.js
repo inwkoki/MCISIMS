@@ -96,6 +96,13 @@ def('e_fire', 'eq', 'equip', 'Fire / smoke', { emo: '🔥' });
 def('e_wreck', 'eq', 'equip', 'Crash site', { emo: '💥' });
 def('e_wind', 'eq', 'wind', 'Wind direction', {});
 def('e_note', 'eq', 'note', 'Text note', {});
+// drawing tools (toolbar, not palette)
+def('d_pen', 'draw', 'pen', 'Freehand drawing', {});
+def('d_poly', 'draw', 'poly', 'Area', {});
+def('d_measure', 'draw', 'measure', 'Measurement', {});
+const PTS_KINDS = ['tape', 'arrow', 'poly', 'measure'];
+const isPts = (d) => !!d && PTS_KINDS.includes(d.kind);
+const PEN_COLS = ['#d32f2f', '#f57c00', '#f9c80e', '#2e9d48', '#1565c0', '#6a1b9a', '#111111', '#ffffff'];
 
 const TRI = { r: ['Red', C.red], y: ['Yellow', C.yel], g: ['Green', C.grn], b: ['Black', C.blk], u: ['Untriaged', '#90a4ae'] };
 
@@ -111,7 +118,7 @@ const S = {
   sel: null, mode: null, dragging: new Set(), locked: LS.get('locked', false),
   zoomScale: LS.get('zoomScale', true), broker: LS.get('broker', 'hivemq'),
   peers: new Map(), log: [], timer: { run: false, base: 0, start: 0 }, seen: new Set(),
-  connected: false, cat: 'sign',
+  connected: false, cat: 'sign', pen: LS.get('pen', { col: '#d32f2f', w: 4 }),
 };
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -121,6 +128,16 @@ function randRoom() { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = 'KKU
 function fmtTime(ms) { const s = Math.max(0, Math.floor(ms / 1000)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ':' : '') + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0'); }
 function clock(ts) { return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
 function toast(msg, ms = 2200) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms); }
+function fmtDist(m) { return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(2)} km`; }
+function lineLen(pts) { let t = 0; for (let i = 1; i < pts.length; i++) t += L.latLng(pts[i - 1]).distanceTo(L.latLng(pts[i])); return t; }
+function polyArea(pts) {
+  if (pts.length < 3) return 0;
+  const lat0 = pts.reduce((a, p) => a + p[0], 0) / pts.length * Math.PI / 180, R = 6378137;
+  const xy = pts.map((p) => [p[1] * Math.PI / 180 * R * Math.cos(lat0), p[0] * Math.PI / 180 * R]);
+  let a = 0; for (let i = 0; i < xy.length; i++) { const [x1, y1] = xy[i], [x2, y2] = xy[(i + 1) % xy.length]; a += x1 * y2 - x2 * y1; }
+  return Math.abs(a / 2);
+}
+function fmtArea(a) { const rai = a / 1600; return (a >= 10000 ? `${(a / 10000).toFixed(2)} ha` : `${Math.round(a).toLocaleString()} m²`) + ` (${rai.toFixed(rai < 10 ? 1 : 0)} rai)`; }
 function itemName(it) { const d = T[it.t]; return (it.label && it.label.trim()) ? `${d ? d.name : it.t} “${it.label.split('\n')[0]}”` : (d ? d.name : it.t); }
 
 /* ---------------- modal helpers (no native dialogs) ---------------- */
@@ -197,6 +214,25 @@ function tokenHTML(it, preview = false) {
 
 function visualKey(it) { const c = Object.assign({}, it); delete c.lat; delete c.lng; delete c.ts; delete c.by; return JSON.stringify(c) + (S.sel === it.id) + S.locked; }
 
+function itemClick(it) {
+  return (e) => {
+    L.DomEvent.stop(e);
+    if (S.mode && S.mode.erase) { if (!S.locked) deleteItem(it.id); return; }
+    if (S.mode) map.fire('click', { latlng: e.latlng }); else select(it.id);
+  };
+}
+function hitLine(pts, closed) { return L.polyline(closed && pts.length > 2 ? [...pts, pts[0]] : pts, { color: '#000', opacity: 0.01, weight: 22 }); }
+function measureLayers(pts) {
+  const out = [L.polyline(pts, { color: '#fff', weight: 6, opacity: .9, interactive: false }), L.polyline(pts, { color: '#111', weight: 3, dashArray: '6 6', interactive: false })];
+  let tot = 0;
+  pts.forEach((p, i) => {
+    out.push(L.circleMarker(p, { radius: 4, color: '#111', fillColor: '#fff', fillOpacity: 1, weight: 2, interactive: false }));
+    if (!i) return;
+    const seg = L.latLng(pts[i - 1]).distanceTo(L.latLng(p)); tot += seg;
+    out.push(L.marker(p, { interactive: false, pane: 'items', icon: L.divIcon({ className: 'tokwrap', iconSize: [0, 0], html: `<div class="mlabel">${i > 1 ? `+${fmtDist(seg)} · ` : ''}<b>${fmtDist(tot)}</b></div>` }) }));
+  });
+  return out;
+}
 function removeView(id) {
   const v = S.views.get(id); if (!v) return;
   v.layers.forEach((l) => map.removeLayer(l)); S.views.delete(id);
@@ -218,7 +254,7 @@ function render(it) {
     const col = it.col || d.col;
     v.circle = L.circle([it.lat, it.lng], { radius: it.r || d.r, color: col, weight: 2, dashArray: it.t === 'z_warm' ? '8 6' : null, fillColor: col, fillOpacity: .13, pane: 'overlayPane' });
     v.circle.bindTooltip(esc(it.label || d.name), { permanent: true, direction: 'center', className: 'zlabel' });
-    v.circle.on('click', (e) => { L.DomEvent.stop(e); if (S.mode) map.fire('click', { latlng: e.latlng }); else select(it.id); });
+    v.circle.on('click', itemClick(it));
     v.marker = L.marker([it.lat, it.lng], { pane: 'items', draggable: !S.locked, icon: L.divIcon({ className: 'tokwrap', iconSize: [14, 14], html: `<div class="zhandle" style="--zc:${col}"></div>` }) });
     if (S.sel === it.id) v.circle.setStyle({ weight: 4 });
     v.layers.push(v.circle, v.marker);
@@ -240,15 +276,26 @@ function render(it) {
       }
     }
     if (S.sel === it.id) v.layers.push(L.polyline(pts, { color: '#1e88e5', weight: 13, opacity: .35, interactive: false }));
+    v.layers.push(hitLine(pts));
     if (it.label && pts.length) v.layers[0].bindTooltip(esc(it.label), { permanent: true, className: 'zlabel', direction: 'top' });
-    v.layers.forEach((l) => l.on && l.on('click', (e) => { L.DomEvent.stop(e); if (S.mode) map.fire('click', { latlng: e.latlng }); else select(it.id); }));
+    v.layers.forEach((l) => l.on && l.on('click', itemClick(it)));
+  } else if (d.kind === 'pen' || d.kind === 'poly' || d.kind === 'measure') {
+    const pts = it.pts || []; const col = it.col || '#d32f2f';
+    if (S.sel === it.id) v.layers.push(L.polyline(d.kind === 'poly' && pts.length > 2 ? [...pts, pts[0]] : pts, { color: '#1e88e5', weight: (it.w || 4) + 10, opacity: .35, interactive: false }));
+    if (d.kind === 'pen') v.layers.push(L.polyline(pts, { color: col, weight: it.w || 4, lineCap: 'round', lineJoin: 'round', interactive: false }));
+    else if (d.kind === 'poly') {
+      const pg = L.polygon(pts, { color: col, weight: 3, fillColor: col, fillOpacity: .18 });
+      pg.bindTooltip(esc((it.label ? it.label + ' · ' : '') + fmtArea(polyArea(pts))), { permanent: true, direction: 'center', className: 'zlabel' });
+      pg.on('click', itemClick(it)); v.layers.push(pg);
+    } else v.layers.push(...measureLayers(pts));
+    const h = hitLine(pts, d.kind === 'poly'); h.on('click', itemClick(it)); v.layers.push(h);
   } else {
     v.marker = L.marker([it.lat, it.lng], { pane: 'items', draggable: !S.locked, riseOnHover: true, icon: L.divIcon({ className: 'tokwrap', iconSize: [0, 0], html: tokenHTML(it) }) });
     v.layers.push(v.marker);
   }
   if (v.marker) {
     const mk = v.marker; let last = 0;
-    mk.on('click', (e) => { L.DomEvent.stop(e); if (S.mode) map.fire('click', { latlng: e.latlng }); else select(it.id); });
+    mk.on('click', itemClick(it));
     mk.on('dragstart', () => { S.dragging.add(it.id); });
     mk.on('drag', () => {
       const ll = mk.getLatLng(); const cur = S.items.get(it.id); if (!cur) return;
@@ -345,53 +392,158 @@ map.getContainer().addEventListener('drop', (e) => {
 $('#palToggle').onclick = () => { $('#palette').classList.toggle('collapsed'); $('#palToggle').textContent = $('#palette').classList.contains('collapsed') ? '▴' : '▾'; };
 
 /* ---------------- placement / drawing modes ---------------- */
-let preview = null;
+let preview = null, rubber = null;
+const localMeasures = L.layerGroup().addTo(map);
+function clearRubber() { if (rubber) { map.removeLayer(rubber); rubber = null; } }
 function setMode(m) {
   S.mode = m;
   if (preview) { map.removeLayer(preview); preview = null; }
-  const bar = $('#modeBar');
-  map.getContainer().classList.toggle('placing', !!m);
+  clearRubber();
+  const bar = $('#modeBar'), ct = map.getContainer();
+  ct.classList.toggle('placing', !!m);
+  ct.classList.toggle('pen', !!(m && m.pen));
+  ct.classList.toggle('erasing', !!(m && m.erase));
+  if (m && m.pen) map.dragging.disable(); else map.dragging.enable();
+  updateToolButtons();
   if (!m) { bar.hidden = true; renderPalette(); return; }
-  const d = T[m.t]; const line = d.kind === 'tape' || d.kind === 'arrow';
+  const line = !!m.t && isPts(T[m.t]);
   bar.hidden = false;
   $('#modeUndo').hidden = !line; $('#modeDone').hidden = !line;
+  $('#modeShare').hidden = m.t !== 'd_measure';
+  $('#modeCancel').textContent = (m.pen || m.erase) ? 'Done' : 'Cancel';
   updateModeText();
-  if (window.innerWidth <= 720 && !line) $('#palette').classList.add('collapsed');
+  if (window.innerWidth <= 720) $('#palette').classList.add('collapsed');
   renderPalette();
 }
 function updateModeText() {
-  const m = S.mode; if (!m) return; const d = T[m.t];
-  const line = d.kind === 'tape' || d.kind === 'arrow';
-  $('#modeTxt').textContent = line ? `${d.name}: tap points (${m.pts.length})` : `Tap map to place: ${d.name}`;
+  const m = S.mode; if (!m) return;
+  let txt;
+  if (m.erase) txt = '🧽 Eraser: tap items to delete';
+  else if (m.pen) txt = '✏️ Drag on the map to draw';
+  else {
+    const d = T[m.t];
+    if (d.kind === 'measure') txt = `📏 ${m.pts.length < 2 ? 'Tap points to measure' : 'Total ' + fmtDist(lineLen(m.pts))}`;
+    else if (d.kind === 'poly') txt = `⬟ Area: tap corners (${m.pts.length})${m.pts.length > 2 ? ' · ' + fmtArea(polyArea(m.pts)) : ''}`;
+    else if (isPts(d)) txt = `${d.name}: tap points (${m.pts.length})`;
+    else txt = `Tap map to place: ${d.name}`;
+  }
+  $('#modeTxt').textContent = txt;
 }
+function refreshPreview() {
+  if (preview) { map.removeLayer(preview); preview = null; }
+  const m = S.mode; if (!m || !m.pts || !m.pts.length) return; const d = T[m.t];
+  if (d.kind === 'measure') preview = L.layerGroup(measureLayers(m.pts));
+  else if (d.kind === 'poly') preview = L.polygon(m.pts, { color: S.pen.col, weight: 3, dashArray: '4 6', fillOpacity: .12, interactive: false });
+  else preview = L.polyline(m.pts, { color: d.kind === 'tape' ? '#f9c80e' : (d.col || '#1565c0'), weight: 5, dashArray: '4 6', interactive: false });
+  preview.addTo(map);
+}
+map.on('mousemove', (e) => {
+  const m = S.mode; if (!m || !m.pts || !m.pts.length) return clearRubber();
+  const last = m.pts[m.pts.length - 1], d = T[m.t];
+  clearRubber();
+  const seg = L.latLng(last).distanceTo(e.latlng);
+  const lay = [L.polyline([last, e.latlng], { color: '#111', weight: 2, dashArray: '3 5', interactive: false })];
+  if (d.kind === 'measure') lay.push(L.marker(e.latlng, { interactive: false, pane: 'items', icon: L.divIcon({ className: 'tokwrap', iconSize: [0, 0], html: `<div class="mlabel ghost">+${fmtDist(seg)} · <b>${fmtDist(lineLen(m.pts) + seg)}</b></div>` }) }));
+  rubber = L.layerGroup(lay).addTo(map);
+});
 map.on('click', (e) => {
   if (!S.mode) { select(null); closeDropdowns(); return; }
+  if (S.mode.pen || S.mode.erase) return;
   const d = T[S.mode.t];
-  if (d.kind === 'tape' || d.kind === 'arrow') {
+  if (isPts(d)) {
     S.mode.pts.push([+e.latlng.lat.toFixed(7), +e.latlng.lng.toFixed(7)]);
-    if (preview) map.removeLayer(preview);
-    preview = L.polyline(S.mode.pts, { color: d.kind === 'tape' ? '#f9c80e' : (d.col || '#1565c0'), weight: 5, dashArray: '4 6' }).addTo(map);
-    updateModeText();
+    refreshPreview(); updateModeText();
     return;
   }
   createItem(S.mode.t, e.latlng);
   if (!$('#repeatPlace').checked) setMode(null);
 });
-map.on('dblclick', () => { if (S.mode && S.mode.pts && S.mode.pts.length >= 2) finishLine(); });
-function finishLine() {
-  const m = S.mode; if (!m) return;
-  if (m.pts.length < 2) return toast('Need at least 2 points');
-  const lat = m.pts.reduce((a, p) => a + p[0], 0) / m.pts.length, lng = m.pts.reduce((a, p) => a + p[1], 0) / m.pts.length;
-  createItem(m.t, L.latLng(lat, lng), { pts: m.pts.slice() });
+map.on('dblclick', () => { if (S.mode && S.mode.pts && S.mode.pts.length >= 2) finishLine(false); });
+function centroid(pts) { return L.latLng(pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length); }
+function finishLine(share) {
+  const m = S.mode; if (!m || !m.pts) return;
+  const d = T[m.t], min = d.kind === 'poly' ? 3 : 2;
+  if (m.pts.length < min) return toast(`Need at least ${min} points`);
+  if (d.kind === 'measure' && share !== true) {
+    measureLayers(m.pts).forEach((l) => localMeasures.addLayer(l));
+    toast(`Distance ${fmtDist(lineLen(m.pts))} (only on your screen — 🧹 clears)`);
+  } else {
+    const extra = { pts: m.pts.slice() };
+    if (d.kind === 'poly') extra.col = S.pen.col;
+    createItem(m.t, centroid(m.pts), extra);
+  }
   setMode(null);
 }
-$('#modeDone').onclick = finishLine;
-$('#modeUndo').onclick = () => { if (S.mode && S.mode.pts.length) { S.mode.pts.pop(); if (preview) preview.setLatLngs(S.mode.pts); updateModeText(); } };
+$('#modeDone').onclick = () => finishLine(false);
+$('#modeShare').onclick = () => finishLine(true);
+$('#modeUndo').onclick = () => { if (S.mode && S.mode.pts && S.mode.pts.length) { S.mode.pts.pop(); refreshPreview(); clearRubber(); updateModeText(); } };
+
+/* ---------------- freehand pen ---------------- */
+let stroke = null;
+const mapEl = map.getContainer();
+mapEl.addEventListener('pointerdown', (e) => {
+  if (!S.mode || !S.mode.pen || stroke || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  if (e.target.closest('.leaflet-control')) return;
+  e.preventDefault(); try { mapEl.setPointerCapture(e.pointerId); } catch {}
+  const ll = map.mouseEventToLatLng(e);
+  stroke = { id: e.pointerId, pts: [ll], last: map.mouseEventToContainerPoint(e),
+    line: L.polyline([ll], { color: S.pen.col, weight: S.pen.w, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(map) };
+});
+mapEl.addEventListener('pointermove', (e) => {
+  if (!stroke || e.pointerId !== stroke.id) return;
+  const p = map.mouseEventToContainerPoint(e); if (p.distanceTo(stroke.last) < 2) return;
+  stroke.last = p; const ll = map.containerPointToLatLng(p); stroke.pts.push(ll); stroke.line.addLatLng(ll);
+});
+function endStroke(e) {
+  if (!stroke || (e && e.pointerId !== stroke.id)) return;
+  const s = stroke; stroke = null; map.removeLayer(s.line);
+  if (s.pts.length < 2) return;
+  const simp = L.LineUtil.simplify(s.pts.map((ll) => map.latLngToLayerPoint(ll)), 1.2).map((p) => { const ll = map.layerPointToLatLng(p); return [+ll.lat.toFixed(7), +ll.lng.toFixed(7)]; });
+  if (simp.length < 2) return;
+  createItem('d_pen', centroid(simp), { pts: simp, col: S.pen.col, w: S.pen.w });
+}
+mapEl.addEventListener('pointerup', endStroke);
+mapEl.addEventListener('pointercancel', endStroke);
+
+/* ---------------- toolbar ---------------- */
+function updateToolButtons() {
+  const m = S.mode, cur = !m ? 'pan' : m.erase ? 'erase' : m.pen ? 'pen' : m.t === 'd_poly' ? 'poly' : m.t === 'd_measure' ? 'measure' : '';
+  document.querySelectorAll('#tools [data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === cur));
+  $('#penSw').style.background = S.pen.col;
+  $('#penSw').style.height = $('#penSw').style.width = Math.min(22, 8 + S.pen.w) + 'px';
+}
+function setTool(t) {
+  closeDropdowns();
+  const editing = ['pen', 'poly', 'erase'].includes(t);
+  if (editing && S.locked) return toast('View-only mode is on (☰ menu to unlock)');
+  select(null);
+  if (t === 'pan') setMode(null);
+  else if (t === 'pen') setMode(S.mode && S.mode.pen ? null : { pen: true, t: 'd_pen' });
+  else if (t === 'erase') setMode(S.mode && S.mode.erase ? null : { erase: true });
+  else if (t === 'poly') setMode({ t: 'd_poly', pts: [] });
+  else if (t === 'measure') setMode({ t: 'd_measure', pts: [] });
+  else if (t === 'clearm') { localMeasures.clearLayers(); toast('Cleared your measurements'); }
+  else if (t === 'style') {
+    const r = $('#tools').getBoundingClientRect(), pm = $('#penMenu');
+    pm.innerHTML = `<div class="pm-title">Pen / area colour</div><div class="pm-row">${PEN_COLS.map((c) => `<button data-pc="${c}" class="pm-sw ${c === S.pen.col ? 'on' : ''}" style="background:${c}"></button>`).join('')}</div>
+      <div class="pm-title">Width</div><div class="pm-row">${[2, 4, 7, 12].map((w) => `<button data-pw="${w}" class="pm-w ${w === S.pen.w ? 'on' : ''}"><span style="height:${w}px;background:${S.pen.col}"></span></button>`).join('')}</div>`;
+    const right = r.right + 8 + 220 < window.innerWidth;
+    pm.style.top = r.top + 'px'; pm.style.left = right ? (r.right + 8) + 'px' : 'auto'; pm.style.right = right ? 'auto' : (window.innerWidth - r.left + 8) + 'px';
+    pm.hidden = false;
+  }
+}
+$('#tools').addEventListener('click', (e) => { e.stopPropagation(); const b = e.target.closest('[data-tool]'); if (b) setTool(b.dataset.tool); });
+$('#penMenu').addEventListener('click', (e) => {
+  e.stopPropagation(); const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.pc) S.pen.col = b.dataset.pc; if (b.dataset.pw) S.pen.w = +b.dataset.pw;
+  LS.set('pen', S.pen); updateToolButtons(); setTool('style'); if (S.mode && S.mode.t === 'd_poly') refreshPreview();
+});
 $('#modeCancel').onclick = () => setMode(null);
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input,textarea')) return;
   if (e.key === 'Escape') { setMode(null); select(null); closeDropdowns(); }
-  if (e.key === 'Enter' && S.mode && S.mode.pts) finishLine();
+  if (e.key === 'Enter' && S.mode && S.mode.pts) finishLine(false);
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) { const k = { p: 'pen', m: 'measure', a: 'poly', e: 'erase', v: 'pan' }[e.key.toLowerCase()]; if (k) setTool(k); }
   if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel && !S.locked) deleteItem(S.sel);
 });
 
@@ -409,8 +561,16 @@ function renderInspector() {
   const ro = S.locked ? 'disabled' : '';
   let h = `<button class="close" data-a="close">✕</button><h3>${esc(d.name)}</h3><div class="meta">Last edit: ${esc(it.by || '?')} · ${clock(it.ts || Date.now())}</div>`;
   const isText = d.kind === 'sign' || d.kind === 'note';
+  if (d.kind === 'measure') h += `<label>Distance</label><div style="font-size:20px;font-weight:700">${fmtDist(lineLen(it.pts || []))}</div>`;
+  if (d.kind === 'poly') h += `<label>Area</label><div style="font-size:16px;font-weight:700">${fmtArea(polyArea(it.pts || []))}</div><div class="meta">Perimeter ${fmtDist(lineLen([...(it.pts || []), (it.pts || [])[0]].filter(Boolean)))}</div>`;
+  if (d.kind === 'pen' || d.kind === 'measure') { /* no label */ } else {
   h += `<label>${isText ? 'Text' : 'Label'}</label>`;
   h += isText ? `<textarea id="insLabel" ${ro} placeholder="${esc(d.text || '')}">${esc(it.label ?? '')}</textarea>` : `<input type="text" id="insLabel" ${ro} value="${esc(it.label ?? '')}">`;
+  }
+  if (d.kind === 'pen' || d.kind === 'poly') {
+    h += `<label>Colour</label><div class="row swatches">${PEN_COLS.map((c) => `<button ${ro} data-col="${c}" style="background:${c};border:1px solid #ccc" class="${it.col === c ? 'on' : ''}"></button>`).join('')}</div>`;
+    if (d.kind === 'pen') h += `<label>Width</label><div class="row">${[2, 4, 7, 12].map((w) => `<button ${ro} data-w="${w}" class="${(it.w || 4) === w ? 'on' : ''}">${w}px</button>`).join('')}</div>`;
+  }
   if (d.kind === 'pt') {
     h += `<label>Triage</label><div class="row">${['r', 'y', 'g', 'b', 'u'].map((k) => `<button ${ro} data-tri="${k}" class="tri-${k} ${(it.tri || d.tri) === k ? 'on' : ''}">${TRI[k][0]}</button>`).join('')}</div>`;
     h += `<label>Notes (injury / vitals / treatment)</label><textarea id="insNote" ${ro}>${esc(it.note || '')}</textarea>`;
@@ -419,11 +579,11 @@ function renderInspector() {
     h += `<label>Radius: <b id="rv">${it.r} m</b></label><input type="range" id="insR" min="5" max="400" step="5" value="${it.r}" ${ro}>`;
     h += `<label>Colour</label><div class="row swatches">${[C.red, '#f9a825', C.grn, C.blu, '#6a1b9a', '#424242'].map((c) => `<button ${ro} data-col="${c}" style="background:${c}" class="${it.col === c ? 'on' : ''}"></button>`).join('')}</div>`;
   }
-  if (!['zone', 'tape', 'arrow', 'pt'].includes(d.kind)) {
+  if (!['zone', 'tape', 'arrow', 'pt', 'pen', 'poly', 'measure'].includes(d.kind)) {
     h += `<label>Rotate / size</label><div class="row"><button ${ro} data-a="rl">⟲ 45°</button><button ${ro} data-a="rr">⟳ 45°</button><button ${ro} data-a="sm">－</button><button ${ro} data-a="lg">＋</button></div>`;
   }
   h += `<label>&nbsp;</label><div class="row">`;
-  if (!['tape', 'arrow'].includes(d.kind)) h += `<button ${ro} data-a="dup">⧉ Duplicate</button>`;
+  if (!['tape', 'arrow', 'pen', 'poly', 'measure'].includes(d.kind)) h += `<button ${ro} data-a="dup">⧉ Duplicate</button>`;
   h += `<button ${ro} data-a="del" class="del">🗑 Delete</button></div>`;
   box.innerHTML = h; box.hidden = false;
   const lab = $('#insLabel');
@@ -436,6 +596,7 @@ $('#inspector').addEventListener('click', (e) => {
   const it = S.items.get(S.sel); if (!it) return; const d = T[it.t];
   if (b.dataset.tri) return updateItem(it.id, { tri: b.dataset.tri }, `re-triaged patient ${it.label} → ${TRI[b.dataset.tri][0]}`);
   if (b.dataset.col) return updateItem(it.id, { col: b.dataset.col });
+  if (b.dataset.w) return updateItem(it.id, { w: +b.dataset.w });
   switch (b.dataset.a) {
     case 'close': select(null); break;
     case 'rl': updateItem(it.id, { rot: ((it.rot || 0) - 45 + 360) % 360 }); break;
@@ -582,7 +743,7 @@ $('#peersBtn').onclick = () => {
 };
 
 /* ---------------- menus ---------------- */
-function closeDropdowns() { ['#menu', '#placesMenu', '#layerMenu'].forEach((s) => ($(s).hidden = true)); }
+function closeDropdowns() { ['#menu', '#placesMenu', '#layerMenu', '#penMenu'].forEach((s) => ($(s).hidden = true)); }
 function toggleDD(sel) { const was = $(sel).hidden; closeDropdowns(); $(sel).hidden = !was; }
 $('#menuBtn').onclick = (e) => { e.stopPropagation(); toggleDD('#menu'); };
 $('#placesBtn').onclick = (e) => {
@@ -606,11 +767,12 @@ $('#layerMenu').onclick = (e) => {
   map.removeLayer(LAYERS[curLayer].l); curLayer = b.dataset.l; LAYERS[curLayer].l.addTo(map); LS.set('layer', curLayer); closeDropdowns();
 };
 [$('#menu'), $('#placesMenu'), $('#layerMenu')].forEach((m) => m.addEventListener('click', (e) => e.stopPropagation()));
-document.addEventListener('click', (e) => { if (!e.target.closest('.dropdown,#menuBtn,#placesBtn,#layerBtn')) closeDropdowns(); });
+document.addEventListener('click', (e) => { if (!e.target.closest('.dropdown,#menuBtn,#placesBtn,#layerBtn,#tools')) closeDropdowns(); });
 
 function applyLock() {
   $('#lockTxt').textContent = S.locked ? 'Unlock editing' : 'View-only mode';
   $('#palette').style.display = S.locked ? 'none' : '';
+  document.body.classList.toggle('locked', S.locked);
   $('#zsTxt').textContent = 'Icons scale with zoom: ' + (S.zoomScale ? 'ON' : 'OFF');
   [...S.views.keys()].forEach((id) => { const it = S.items.get(id); removeView(id); if (it) render(it); });
   renderInspector();
@@ -670,7 +832,7 @@ function download(name, text, type) { const a = document.createElement('a'); a.h
 
 /* ---------------- boot ---------------- */
 async function boot() {
-  renderPalette();
+  renderPalette(); updateToolButtons();
   const params = new URLSearchParams(location.search);
   const room = cleanRoom(params.get('room')) || LS.get('lastRoom', '') || randRoom();
   if (!S.name) S.name = 'User-' + Math.random().toString(36).slice(2, 5).toUpperCase();

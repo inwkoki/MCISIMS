@@ -36,11 +36,23 @@
   <label class="repeat"><input type="checkbox" id="repeatPlace"> Place multiple</label>
 </aside>
 
+<div id="tools">
+  <button data-tool="pan" title="Select / move (V)">🖐️</button>
+  <button data-tool="pen" title="Freehand draw (P)">✏️</button>
+  <button data-tool="poly" title="Draw area + size (A)">⬟</button>
+  <button data-tool="measure" title="Measure distance (M)">📏</button>
+  <button data-tool="erase" title="Eraser – tap items to delete (E)">🧽</button>
+  <button data-tool="style" title="Pen colour &amp; width"><span id="penSw"></span></button>
+  <button data-tool="clearm" title="Clear my measurements">🧹</button>
+</div>
+<div id="penMenu" class="dropdown" hidden></div>
+
 <div id="stats"></div>
 
 <div id="modeBar" hidden>
   <span id="modeTxt"></span>
   <button id="modeUndo" hidden>Undo</button>
+  <button id="modeShare" hidden title="Keep this measurement on everyone's map">Share</button>
   <button id="modeDone" hidden>Finish</button>
   <button id="modeCancel">Cancel</button>
 </div>

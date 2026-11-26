@@ -8,6 +8,7 @@ Live: https://inwkoki.github.io/MCISIMS/
 - Component palette: signs (Triage / Treatment R-Y-G / Command Post / Loading / Staging / Entrance / Exit / Morgue …), vehicles (ALS/BLS, rescue, fire, police, bus, helicopter), staff roles (IC, MC, triage/treatment/transport officers, MD, RN, EMT …), patients (red/yellow/green/black/untriaged, auto-numbered, notes), hot/warm/cold zones, barrier tape, flow arrows, cones, flags, tents, notes
 - **Live multi-device sync** — everyone with the same room link sees the same map; drag updates stream in real time
 - Room link + QR code, online list, shared scenario timer, activity log (CSV export), triage counter
+- Drawing toolbar: ✏️ freehand pen (colour/width), ⬟ area polygon with m² / rai, 📏 distance ruler (private or shared), 🧽 eraser — shortcuts P / A / M / E / V
 - "Bring everyone to my view", view-only mode for observers, JSON export/import of scenarios, local backup
 
 ## How sync works
