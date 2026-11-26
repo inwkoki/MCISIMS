@@ -13,8 +13,8 @@ const BROKERS = {
 const PREFIX = 'kkumcisim/v1';
 const PLACES = [
   { id: 'srinagarind', name: 'Srinagarind Hospital (KKU)', ll: [16.4681, 102.8301], z: 17 },
-  { id: 'central',     name: 'Central Khon Kaen Campus',   ll: [16.4632, 102.8303], z: 18 },
-  { id: 'both',        name: 'Srinagarind + Central Campus', ll: [16.4655, 102.8310], z: 17 },
+  { id: 'central',     name: 'Central Khon Kaen Campus',   ll: [16.4622, 102.8305], z: 18 },
+  { id: 'both',        name: 'Srinagarind + Central Campus', ll: [16.4645, 102.8305], z: 17 },
   { id: 'kku',         name: 'KKU main campus (overview)', ll: [16.4745, 102.8230], z: 15 },
 ];
 const DEFAULT_VIEW = PLACES[2];
